@@ -1,4 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { analyzeEvidenceFloor, type ReviewRow } from "./evidence-floor.js";
 
 interface CliArgs {
@@ -66,8 +68,8 @@ export function renderReport(rows: ReviewRow[]): string {
     "",
     "This is a review-only report for human judgment. It does not rewrite the source document.",
     "",
-    "| source line | claim | claim class | required evidence floor | provided evidence | floor status | risk flags | bounded wording | next verification step |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| source line | claim | claim class | match basis | required evidence floor | provided evidence | floor status | risk flags | bounded wording | next verification step |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ...rows.map(renderRow),
     "",
     "## Boundary Note",
@@ -83,6 +85,7 @@ function renderRow(row: ReviewRow): string {
     row.sourceLine.toString(),
     row.claim,
     row.claimClass,
+    row.matchBasis,
     row.requiredEvidenceFloor,
     row.providedEvidence,
     row.floorStatus,
@@ -109,4 +112,6 @@ function usage(): never {
   );
 }
 
-main();
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  main();
+}

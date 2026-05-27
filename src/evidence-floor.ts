@@ -79,6 +79,8 @@ export interface EvidenceFloor {
   label: string;
   claimTerms: string[];
   minimumEvidence: EvidenceStrength;
+  minimumEvidenceRaw: string;
+  minimumEvidenceStatus: "valid" | "invalid";
   requiredScope: string;
   insufficientEvidence: string[];
   riskFlags: string[];
@@ -88,6 +90,7 @@ export interface ReviewRow {
   sourceLine: number;
   claim: string;
   claimClass: string;
+  matchBasis: string;
   requiredEvidenceFloor: string;
   providedEvidence: string;
   floorStatus: string;
@@ -113,8 +116,10 @@ export function analyzeEvidenceFloor(
   const floors = parseFloorPolicy(policyText);
   const reviews = claims.map((claim, index) => {
     const floor = matchFloor(claim.text, floors);
-    const evidence = matchEvidence(claim.text, evidenceNotes) ?? evidenceNotes[index];
-    return reviewClaim(claim, floor, evidence);
+    const evidenceMatch = matchEvidence(claim.text, evidenceNotes);
+    const evidence = evidenceMatch ?? evidenceNotes[index];
+    const matchBasis = evidenceMatch ? "keyword_match" : evidence ? "ordered_fallback" : "none";
+    return reviewClaim(claim, floor, evidence, matchBasis);
   });
 
   return { claims, floors, evidenceNotes, reviews };
@@ -267,18 +272,22 @@ export function reviewClaim(
   claim: Claim,
   floor: EvidenceFloor | undefined,
   evidence: EvidenceNote | undefined,
+  matchBasis = evidence ? "keyword_match" : "none",
 ): ReviewRow {
   const providedStrength = evidence?.evidenceStrength ?? "unsupported";
   const requiredStrength = floor?.minimumEvidence ?? "self-attested";
-  const status = STRENGTH_RANK[providedStrength] >= STRENGTH_RANK[requiredStrength] ? "meets_floor" : "below_floor";
-  const flags = riskFlags(claim.text, floor, evidence, status);
+  const status = floorStatus(floor, evidence, providedStrength, requiredStrength);
+  const flags = riskFlags(claim.text, floor, evidence, status, matchBasis);
 
   return {
     sourceLine: claim.line,
     claim: claim.text,
     claimClass: floor?.label ?? "unclassified claim",
+    matchBasis,
     requiredEvidenceFloor: floor
-      ? `${floor.minimumEvidence}; scope: ${floor.requiredScope || "not stated"}`
+      ? `${floor.minimumEvidenceStatus === "invalid" ? `invalid policy value: ${floor.minimumEvidenceRaw}` : floor.minimumEvidence}; scope: ${
+          floor.requiredScope || "not stated"
+        }`
       : "No matching floor. Treat as manual review.",
     providedEvidence: evidence
       ? `${evidence.evidenceProvided || evidence.label}; strength: ${evidence.evidenceStrength}; scope: ${
@@ -305,10 +314,13 @@ function structuredEvidence(fields: Record<string, string>): EvidenceNote {
 }
 
 function structuredFloor(fields: Record<string, string>): EvidenceFloor {
+  const normalizedMinimum = normalizeStrengthWithStatus(fields.minimumEvidence);
   return {
     label: fields.label ?? "untitled floor",
     claimTerms: splitList(fields.claimTerms ?? ""),
-    minimumEvidence: normalizeStrength(fields.minimumEvidence),
+    minimumEvidence: normalizedMinimum.strength,
+    minimumEvidenceRaw: fields.minimumEvidence ?? "",
+    minimumEvidenceStatus: normalizedMinimum.status,
     requiredScope: fields.requiredScope ?? "",
     insufficientEvidence: splitList(fields.insufficientEvidence ?? ""),
     riskFlags: splitList(fields.riskFlags ?? ""),
@@ -316,11 +328,35 @@ function structuredFloor(fields: Record<string, string>): EvidenceFloor {
 }
 
 function normalizeStrength(value = ""): EvidenceStrength {
+  return normalizeStrengthWithStatus(value).strength;
+}
+
+function normalizeStrengthWithStatus(value = ""): { strength: EvidenceStrength; status: "valid" | "invalid" } {
   const normalized = value.trim().toLowerCase();
   if (EVIDENCE_STRENGTHS.includes(normalized as EvidenceStrength)) {
-    return normalized as EvidenceStrength;
+    return { strength: normalized as EvidenceStrength, status: "valid" };
   }
-  return "unsupported";
+  return { strength: "unsupported", status: value.trim() ? "invalid" : "invalid" };
+}
+
+function floorStatus(
+  floor: EvidenceFloor | undefined,
+  evidence: EvidenceNote | undefined,
+  providedStrength: EvidenceStrength,
+  requiredStrength: EvidenceStrength,
+): string {
+  if (!floor) {
+    return "manual_review";
+  }
+  if (floor.minimumEvidenceStatus === "invalid") {
+    return "below_floor";
+  }
+  if (!evidence) {
+    return "below_floor";
+  }
+  const strengthMeets = STRENGTH_RANK[providedStrength] >= STRENGTH_RANK[requiredStrength];
+  const scopeMeets = scopeSupportsFloor(floor, evidence);
+  return strengthMeets && scopeMeets ? "meets_floor" : "below_floor";
 }
 
 function riskFlags(
@@ -328,17 +364,26 @@ function riskFlags(
   floor: EvidenceFloor | undefined,
   evidence: EvidenceNote | undefined,
   status: string,
+  matchBasis: string,
 ): string[] {
   const flags = new Set<string>();
   if (status === "below_floor") {
     flags.add("below_floor");
   }
+  if (matchBasis === "ordered_fallback") {
+    flags.add("low_confidence_match");
+  }
   const claimTokens = tokens(claim);
   if ([...claimTokens].some((token) => DEFAULT_HIGH_RISK_TERMS.has(token))) {
     flags.add("high_stakes_claim");
   }
+  if (floor?.minimumEvidenceStatus === "invalid") {
+    flags.add("invalid_floor_policy");
+  }
   if (floor) {
-    floor.riskFlags.forEach((flag) => flags.add(flag));
+    floor.riskFlags
+      .filter((flag) => status === "below_floor" || !failureOnlyPolicyFlags.has(flag))
+      .forEach((flag) => flags.add(flag));
   }
   if (evidence && floor && status === "below_floor") {
     const weakEvidence = floor.insufficientEvidence.some((phrase) =>
@@ -348,7 +393,7 @@ function riskFlags(
       flags.add("insufficient_evidence_type");
     }
   }
-  if (evidence && floor && status === "below_floor" && hasScopeMismatch(floor, evidence)) {
+  if (evidence && floor && !scopeSupportsFloor(floor, evidence)) {
     flags.add("scope_mismatch");
   }
   if (status === "below_floor" && (flags.has("scope_mismatch") || claimLooksProofy(claim))) {
@@ -357,14 +402,24 @@ function riskFlags(
   return [...flags];
 }
 
-function hasScopeMismatch(floor: EvidenceFloor, evidence: EvidenceNote): boolean {
+function scopeSupportsFloor(floor: EvidenceFloor, evidence: EvidenceNote): boolean {
   const requiredTokens = tokens(floor.requiredScope);
-  const scopeTokens = tokens(`${evidence.scopeSupported} ${evidence.limitations}`);
+  const scopeTokens = tokens(evidence.scopeSupported);
   if (requiredTokens.size === 0) {
+    return true;
+  }
+  if ([...requiredTokens].some((token) => !scopeTokens.has(token))) {
     return false;
   }
-  return [...requiredTokens].some((token) => !scopeTokens.has(token));
+  return !scopeContradictedByLimitations(requiredTokens, evidence.limitations);
 }
+
+function scopeContradictedByLimitations(requiredTokens: Set<string>, limitations: string): boolean {
+  const normalizedLimitations = limitations.toLowerCase();
+  return [...requiredTokens].some((token) => new RegExp(`\\b(no|not|without)\\b[^.;]*\\b${escapeRegExp(token)}\\b`).test(normalizedLimitations));
+}
+
+const failureOnlyPolicyFlags = new Set(["below_floor", "scope_mismatch", "proofwashing", "insufficient_evidence_type"]);
 
 function boundedWording(
   claim: string,
@@ -450,11 +505,19 @@ function tokens(value: string): Set<string> {
   return new Set(
     value
       .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, " ")
+      .replace(/[^a-z0-9\s]/g, " ")
       .split(/\s+/)
       .map((token) => token.trim())
+      .map(normalizeToken)
       .filter((token) => token.length > 2 && !STOPWORDS.has(token)),
   );
+}
+
+function normalizeToken(token: string): string {
+  if (token.length > 3 && token.endsWith("s")) {
+    return token.slice(0, -1);
+  }
+  return token;
 }
 
 function containsPhrase(text: string, phrase: string): boolean {
@@ -471,4 +534,8 @@ function sentenceStart(value: string): string {
     return "The available evidence is limited";
   }
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

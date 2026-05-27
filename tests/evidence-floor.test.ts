@@ -6,6 +6,7 @@ import {
   parseEvidenceNotes,
   parseFloorPolicy,
 } from "../src/evidence-floor.js";
+import { parseArgs, renderReport } from "../src/cli.js";
 
 const policy = `
 ## Floor: medical or clinical safety
@@ -114,6 +115,94 @@ test("artifact-backed portfolio demo meets local demo floor", () => {
   assert.match(row.riskFlags, /limited_artifact/);
 });
 
+test("matching strength alone does not meet floor when evidence scope is too narrow", () => {
+  const result = analyzeEvidenceFloor(
+    "The model is safe for hospitals.",
+    `
+## Evidence: external review of checklist
+- evidence provided: external review of local checklist
+- evidence strength: externally corroborated
+- evidence type: external review
+- scope supported: local checklist on synthetic prompts
+- limitations: no clinical safety validation
+- corroboration status: external reviewer
+`,
+    policy,
+  );
+  const row = result.reviews[0];
+  assert.equal(row.floorStatus, "below_floor");
+  assert.match(row.riskFlags, /scope_mismatch/);
+  assert.match(row.riskFlags, /proofwashing/);
+});
+
+test("met floor does not inherit failure-only policy flags", () => {
+  const result = analyzeEvidenceFloor(
+    "The model is safe for hospitals.",
+    `
+## Evidence: external clinical safety review
+- evidence provided: external clinical safety review
+- evidence strength: externally corroborated
+- evidence type: external review
+- scope supported: medical or clinical safety for hospital pilots
+- limitations: pilot scope only
+- corroboration status: external reviewer
+`,
+    policy,
+  );
+  const row = result.reviews[0];
+  assert.equal(row.floorStatus, "meets_floor");
+  assert.doesNotMatch(row.riskFlags, /scope_mismatch/);
+  assert.doesNotMatch(row.riskFlags, /proofwashing/);
+  assert.match(row.riskFlags, /medical_or_clinical_safety/);
+});
+
+test("ordered evidence fallback is visible and low confidence", () => {
+  const result = analyzeEvidenceFloor(
+    "The model is safe for hospitals.",
+    `
+## Evidence: unrelated portfolio output
+- evidence provided: unrelated generated review table
+- evidence strength: artifact-backed
+- evidence type: generated Markdown artifact
+- scope supported: local portfolio demo behavior
+- limitations: no clinical review
+- corroboration status: none
+`,
+    policy,
+  );
+  const row = result.reviews[0];
+  assert.equal(row.matchBasis, "ordered_fallback");
+  assert.match(row.riskFlags, /low_confidence_match/);
+});
+
+test("invalid policy floor strength is flagged instead of weakening the floor silently", () => {
+  const invalidPolicy = `
+## Floor: medical or clinical safety
+- claim terms: safe; safety; hospital
+- minimum evidence: externally confirmed-ish
+- required scope: medical or clinical safety
+- insufficient evidence: local checklist
+- risk flags: medical_or_clinical_safety; scope_mismatch; proofwashing
+`;
+  const result = analyzeEvidenceFloor(
+    "The model is safe for hospitals.",
+    `
+## Evidence: external clinical safety review
+- evidence provided: external clinical safety review
+- evidence strength: externally corroborated
+- evidence type: external review
+- scope supported: medical or clinical safety for hospital pilots
+- limitations: pilot scope only
+- corroboration status: external reviewer
+`,
+    invalidPolicy,
+  );
+  const row = result.reviews[0];
+  assert.equal(row.floorStatus, "below_floor");
+  assert.match(row.requiredEvidenceFloor, /invalid policy value/);
+  assert.match(row.riskFlags, /invalid_floor_policy/);
+});
+
 test("Markdown extraction skips headings, tables, code fences, and blockquotes", () => {
   const claims = extractClaims(`
 # The model is safe for hospitals
@@ -132,4 +221,19 @@ The model is safe for hospitals.
 `);
   assert.equal(claims.length, 1);
   assert.equal(claims[0].line, 14);
+});
+
+test("CLI helpers can be imported without executing main", () => {
+  const args = parseArgs([
+    "claims.md",
+    "--evidence",
+    "evidence.md",
+    "--policy",
+    "policy.md",
+    "--output",
+    "review.md",
+    "--review-only",
+  ]);
+  assert.equal(args.claimsPath, "claims.md");
+  assert.match(renderReport([]), /Evidence Floor Review/);
 });

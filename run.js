@@ -1,3 +1,4 @@
 #!/usr/bin/env node
-import "./dist/src/cli.js";
+import { main } from "./dist/src/cli.js";
 
+main();

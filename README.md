@@ -35,6 +35,7 @@ It produces a review-only table with:
 - source line
 - claim
 - claim class
+- match basis
 - required evidence floor
 - provided evidence
 - floor status
@@ -147,8 +148,9 @@ Supported evidence-strength values:
 ## Current Limits
 
 - Claim extraction is sentence-based and may miss claims spread across sections.
-- Matching is keyword-based, not semantic verification.
+- Matching is keyword-based, not semantic verification. Ordered evidence fallback is marked as `ordered_fallback`.
 - Evidence floors are policy declarations, not universal standards.
+- `meets_floor` means the provided evidence appears to meet both the declared strength and declared scope for the matched floor.
 - Review-only output is the only supported output shape.
 - The tool does not inspect files, URLs, screenshots, logs, demos, or external sources.
 - Suggested bounded wording is for manual editing, not automatic source replacement.
@@ -165,4 +167,3 @@ npm run build
 ## License
 
 MIT
-
