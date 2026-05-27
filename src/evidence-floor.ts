@@ -103,6 +103,7 @@ export interface AnalysisResult {
   claims: Claim[];
   floors: EvidenceFloor[];
   evidenceNotes: EvidenceNote[];
+  policyHealth: string[];
   reviews: ReviewRow[];
 }
 
@@ -114,15 +115,22 @@ export function analyzeEvidenceFloor(
   const claims = extractClaims(claimText);
   const evidenceNotes = parseEvidenceNotes(evidenceText);
   const floors = parseFloorPolicy(policyText);
+  const policyHealth = validatePolicy(floors);
   const reviews = claims.map((claim, index) => {
     const floor = matchFloor(claim.text, floors);
-    const evidenceMatch = matchEvidence(claim.text, evidenceNotes);
-    const evidence = evidenceMatch ?? evidenceNotes[index];
-    const matchBasis = evidenceMatch ? "keyword_match" : evidence ? "ordered_fallback" : "none";
+    const evidenceMatch = matchEvidenceWithScore(claim.text, evidenceNotes);
+    const evidence = evidenceMatch?.note ?? evidenceNotes[index];
+    const matchBasis = evidenceMatch
+      ? evidenceMatch.score <= 1
+        ? "weak_keyword_match"
+        : "keyword_match"
+      : evidence
+        ? "ordered_fallback"
+        : "none";
     return reviewClaim(claim, floor, evidence, matchBasis);
   });
 
-  return { claims, floors, evidenceNotes, reviews };
+  return { claims, floors, evidenceNotes, policyHealth, reviews };
 }
 
 export function extractClaims(text: string): Claim[] {
@@ -244,6 +252,10 @@ export function matchFloor(claim: string, floors: EvidenceFloor[]): EvidenceFloo
 }
 
 export function matchEvidence(claim: string, notes: EvidenceNote[]): EvidenceNote | undefined {
+  return matchEvidenceWithScore(claim, notes)?.note;
+}
+
+function matchEvidenceWithScore(claim: string, notes: EvidenceNote[]): { note: EvidenceNote; score: number } | undefined {
   const claimTokens = tokens(claim);
   let bestNote: EvidenceNote | undefined;
   let bestScore = 0;
@@ -255,7 +267,6 @@ export function matchEvidence(claim: string, notes: EvidenceNote[]): EvidenceNot
         note.evidenceProvided,
         note.evidenceType,
         note.scopeSupported,
-        note.limitations,
       ].join(" "),
     );
     const score = [...claimTokens].filter((token) => noteTokens.has(token)).length;
@@ -265,7 +276,7 @@ export function matchEvidence(claim: string, notes: EvidenceNote[]): EvidenceNot
     }
   }
 
-  return bestScore > 0 ? bestNote : undefined;
+  return bestNote && bestScore > 0 ? { note: bestNote, score: bestScore } : undefined;
 }
 
 export function reviewClaim(
@@ -372,6 +383,9 @@ function riskFlags(
   }
   if (matchBasis === "ordered_fallback") {
     flags.add("low_confidence_match");
+  }
+  if (matchBasis === "weak_keyword_match") {
+    flags.add("weak_keyword_match");
   }
   const claimTokens = tokens(claim);
   if ([...claimTokens].some((token) => DEFAULT_HIGH_RISK_TERMS.has(token))) {
@@ -538,4 +552,30 @@ function sentenceStart(value: string): string {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function validatePolicy(floors: EvidenceFloor[]): string[] {
+  const issues: string[] = [];
+  const labelCounts = new Map<string, number>();
+
+  for (const floor of floors) {
+    labelCounts.set(floor.label, (labelCounts.get(floor.label) ?? 0) + 1);
+    if (floor.minimumEvidenceStatus === "invalid") {
+      issues.push(`invalid_minimum_evidence: ${floor.label} uses "${floor.minimumEvidenceRaw || "blank"}"`);
+    }
+    if (floor.claimTerms.length === 0) {
+      issues.push(`empty_claim_terms: ${floor.label}`);
+    }
+    if (!floor.requiredScope.trim()) {
+      issues.push(`missing_required_scope: ${floor.label}`);
+    }
+  }
+
+  for (const [label, count] of labelCounts.entries()) {
+    if (count > 1) {
+      issues.push(`duplicate_floor_label: ${label}`);
+    }
+  }
+
+  return issues;
 }

@@ -32,6 +32,8 @@ Evidence Floor reads:
 
 It produces a review-only table with:
 
+- policy health notes
+- input health notes
 - source line
 - claim
 - claim class
@@ -73,6 +75,12 @@ Install dependencies and run the synthetic medical safety scenario:
 
 ```bash
 npm install
+npm run demo
+```
+
+Or run one scenario directly:
+
+```bash
 npm run review -- examples/scenarios/medical_safety_claim.md \
   --evidence examples/scenarios/medical_safety_evidence.md \
   --policy examples/policies/evidence-floor.md \
@@ -149,6 +157,7 @@ Supported evidence-strength values:
 
 - Claim extraction is sentence-based and may miss claims spread across sections.
 - Matching is keyword-based, not semantic verification. Ordered evidence fallback is marked as `ordered_fallback`.
+- Very small keyword overlaps are marked as `weak_keyword_match`.
 - Evidence floors are policy declarations, not universal standards.
 - `meets_floor` means the provided evidence appears to meet both the declared strength and declared scope for the matched floor.
 - Review-only output is the only supported output shape.

@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   analyzeEvidenceFloor,
+  type AnalysisResult,
   extractClaims,
   parseEvidenceNotes,
   parseFloorPolicy,
@@ -203,6 +205,88 @@ test("invalid policy floor strength is flagged instead of weakening the floor si
   assert.match(row.riskFlags, /invalid_floor_policy/);
 });
 
+test("analysis exposes policy health issues before claim review", () => {
+  const invalidPolicy = `
+## Floor: medical or clinical safety
+- claim terms:
+- minimum evidence: externally confirmed-ish
+- required scope: medical or clinical safety
+- insufficient evidence: local checklist
+- risk flags: proofwashing
+
+## Floor: medical or clinical safety
+- claim terms: safe
+- minimum evidence: externally corroborated
+- required scope: medical or clinical safety
+- insufficient evidence: local checklist
+- risk flags: proofwashing
+  `;
+  const result = analyzeEvidenceFloor("The model is safe for hospitals.", "", invalidPolicy);
+  const policyHealth = result.policyHealth.join("\n");
+  assert.match(policyHealth, /invalid_minimum_evidence/);
+  assert.match(policyHealth, /empty_claim_terms/);
+  assert.match(policyHealth, /duplicate_floor_label/);
+  assert.match(renderReport(result), /## Policy Health/);
+});
+
+test("report explicitly states when no claims are extracted", () => {
+  const result = analyzeEvidenceFloor("# Heading only\n\n| table | row |\n| --- | --- |", "", policy);
+  const report = renderReport(result);
+  assert.match(report, /No claims were extracted/);
+});
+
+test("report explicitly states when evidence notes are missing", () => {
+  const result = analyzeEvidenceFloor("The model is safe for hospitals.", "", policy);
+  const report = renderReport(result);
+  assert.match(report, /No structured evidence notes were provided/);
+});
+
+test("report input health shows counts when claims and evidence are present", () => {
+  const result = analyzeEvidenceFloor(
+    "The model is safe for hospitals.",
+    `
+## Evidence: local checklist
+- evidence provided: local checklist and synthetic demo
+- evidence strength: artifact-backed
+- evidence type: local checklist
+- scope supported: local checklist on synthetic prompts
+- limitations: no clinical review
+- corroboration status: none
+`,
+    policy,
+  );
+  const report = renderReport(result);
+  assert.match(report, /Claims extracted: 1/);
+  assert.match(report, /Evidence notes parsed: 1/);
+});
+
+test("weak keyword matches are visible", () => {
+  const weakPolicy = `
+## Floor: medical or clinical safety
+- claim terms: safe; hospital
+- minimum evidence: artifact-backed
+- required scope: hospital safety
+- insufficient evidence: local checklist
+- risk flags: scope_mismatch; proofwashing
+`;
+  const result = analyzeEvidenceFloor(
+    "The model is safe for hospitals.",
+    `
+## Evidence: broad safety note
+- evidence provided: checklist mentions safe output
+- evidence strength: artifact-backed
+- evidence type: local checklist
+- scope supported: local checklist
+- limitations: no hospital review
+- corroboration status: none
+`,
+    weakPolicy,
+  );
+  const row = result.reviews[0];
+  assert.equal(row.matchBasis, "weak_keyword_match");
+  assert.match(row.riskFlags, /weak_keyword_match/);
+});
+
 test("Markdown extraction skips headings, tables, code fences, and blockquotes", () => {
   const claims = extractClaims(`
 # The model is safe for hospitals
@@ -235,5 +319,22 @@ test("CLI helpers can be imported without executing main", () => {
     "--review-only",
   ]);
   assert.equal(args.claimsPath, "claims.md");
-  assert.match(renderReport([]), /Evidence Floor Review/);
+  const emptyResult: AnalysisResult = {
+    claims: [],
+    floors: [],
+    evidenceNotes: [],
+    policyHealth: [],
+    reviews: [],
+  };
+  assert.match(renderReport(emptyResult), /Evidence Floor Review/);
+});
+
+test("CLI usage errors print without a stack trace", () => {
+  const result = spawnSync(process.execPath, ["dist/src/cli.js", "--bad"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Usage:/);
+  assert.doesNotMatch(result.stderr, /at usage/);
 });

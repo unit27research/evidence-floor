@@ -31,7 +31,8 @@ jobs:
         run: |
           grep -q "below_floor" examples/reviews/medical_safety_floor_review.md
           grep -q "proofwashing" examples/reviews/medical_safety_floor_review.md
+          grep -q "match basis" examples/reviews/medical_safety_floor_review.md
           grep -q "scope_mismatch" examples/reviews/org_readiness_floor_review.md
+          grep -q "meets_floor" examples/reviews/portfolio_floor_review.md
           grep -q "Boundary Note" examples/reviews/medical_safety_floor_review.md
           ! grep -q "Revised" examples/reviews/medical_safety_floor_review.md
-
