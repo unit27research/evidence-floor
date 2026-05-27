@@ -1,0 +1,18 @@
+{
+  "name": "evidence-floor",
+  "version": "0.1.0",
+  "description": "Unit27 adjacent utility for reviewing whether claims meet declared evidence floors.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "review": "npm run build && node dist/src/cli.js",
+    "demo": "npm run review -- examples/scenarios/portfolio_claim.md --evidence examples/scenarios/portfolio_evidence.md --policy examples/policies/evidence-floor.md --output examples/reviews/portfolio_floor_review.md --review-only && npm run review -- examples/scenarios/org_readiness_claim.md --evidence examples/scenarios/org_readiness_evidence.md --policy examples/policies/evidence-floor.md --output examples/reviews/org_readiness_floor_review.md --review-only && npm run review -- examples/scenarios/medical_safety_claim.md --evidence examples/scenarios/medical_safety_evidence.md --policy examples/policies/evidence-floor.md --output examples/reviews/medical_safety_floor_review.md --review-only",
+    "check": "npm test && npm run demo"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "typescript": "^5.4.5"
+  }
+}
