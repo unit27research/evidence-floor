@@ -13,5 +13,4 @@ Do not create a remote repository, push, deploy, or post publicly until release 
 - [ ] README keeps bounded claims.
 - [ ] No inflated verification, safety, compliance, fraud-prevention, or certification claims.
 - [ ] Public copy describes Evidence Floor as a heuristic review aid.
-- [ ] Joshua approves before remote repo creation, push, publication, or public post.
-
+- [ ] Maintainer approval is recorded before remote repo creation, push, publication, or public post.

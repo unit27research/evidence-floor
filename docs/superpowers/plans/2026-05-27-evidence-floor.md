@@ -40,7 +40,7 @@
 - Create: `examples/reviews/*.md`
 - Create: `README.md`
 - Create: `RELEASE_CHECKLIST.md`
-- Create: `LINKEDIN_DRAFT.md`
+- Keep launch/post drafts outside the public repository.
 - Create: `LICENSE`
 - Create: `.github/workflows/ci.yml`
 
@@ -48,4 +48,3 @@
 - [x] Add tests for floor matching, insufficient evidence, policy parsing, and Markdown skipping.
 - [x] Generate review-only outputs.
 - [x] Add modest Unit27-compatible public copy.
-
